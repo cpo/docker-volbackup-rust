@@ -62,7 +62,7 @@ fn backup_container(ps_info: Vec<PsInfo>) -> Result<(), std::io::Error> {
                 )
             }
         } else {
-            error!("[{container_name}] Response from inspect is wrong")
+            error!("[{container_name}] Response from inspect is wrong (no data returned)")
         }
     }
     Ok(())
@@ -113,7 +113,7 @@ fn backup_all_mounts(
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()?;
-        let exit_status = child.wait().unwrap();
+        let exit_status = child.wait()?;
         if !exit_status.success() {
             return Ok(false);
         }
@@ -132,14 +132,13 @@ where
     R: DeserializeOwned,
 {
     debug!("Execute jsonline {:?}", args);
-    let mut child = Command::new(DOCKER_COMMAND)
+    let child = Command::new(DOCKER_COMMAND)
         .args(args)
         .stdout(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.as_ref().unwrap();
     let fd = stdout.as_fd();
     let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
-    child.wait()?;
     serde_jsonlines::JsonLinesReader::new(&mut BufReader::new(f))
         .read_all::<R>()
         .collect::<std::io::Result<Vec<R>>>()
@@ -152,13 +151,12 @@ where
     R: DeserializeOwned,
 {
     debug!("Execute json {:?}", args);
-    let mut child = Command::new(DOCKER_COMMAND)
+    let child = Command::new(DOCKER_COMMAND)
         .args(args)
         .stdout(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.as_ref().unwrap();
     let fd = stdout.as_fd();
     let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
-    child.wait()?;
     Ok(serde_json::from_reader::<_, Vec<R>>(f)?)
 }
