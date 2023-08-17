@@ -1,5 +1,7 @@
+use crate::types::{ContainerInfo, PsInfo};
+use log::{debug, error, info};
+use serde::de::DeserializeOwned;
 use std::{
-    collections::HashMap,
     env,
     ffi::OsStr,
     fmt::Debug,
@@ -9,36 +11,10 @@ use std::{
     process::{Command, Stdio},
 };
 
-use log::{debug, error, info};
-use serde::{de::DeserializeOwned, Deserialize};
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct PsInfo {
-    names: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ContainerInfo {
-    id: String,
-    mounts: Vec<Mounts>,
-    config: ContainerConfig,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Mounts {
-    destination: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ContainerConfig {
-    labels: HashMap<String, String>,
-}
+mod types;
 
 const DOCKER_COMMAND: &str = "/Users/cpolderman/.rd/bin/docker";
+const TYPE_BACKUPCONTAINER: &str = "backupcontainer";
 
 fn main() {
     if env::var("RUST_LOG").is_err() {
@@ -53,11 +29,20 @@ fn main() {
 }
 
 fn backup_container(ps_info: Vec<PsInfo>) -> Result<(), std::io::Error> {
-    info!("Found {:?}", ps_info);
+    info!(
+        "Found containers: {:?}",
+        ps_info
+            .iter()
+            .map(|f| { f.names.as_str() })
+            .collect::<Vec<&str>>()
+    );
 
     for ps_info in ps_info {
         let container_name = &ps_info.names;
-        info!("Getting container information for {}", container_name);
+        info!(
+            "[{container_name}] Getting container information for {}",
+            container_name
+        );
 
         let inspected = docker_json_command::<ContainerInfo, _, _>(vec![
             "inspect",
@@ -66,12 +51,18 @@ fn backup_container(ps_info: Vec<PsInfo>) -> Result<(), std::io::Error> {
         ])?;
         if let Some(container_info) = inspected.get(0) {
             if !backup_all_mounts(container_info, &ps_info)? {
-                error!("Error backing up container {}", container_name)
+                error!(
+                    "[{container_name}] Error backing up container {}",
+                    container_name
+                )
             } else {
-                info!("Backup of container {} done.", container_name)
+                info!(
+                    "[{container_name}] Backup of container {} done.",
+                    container_name
+                )
             }
         } else {
-            error!("Response from inspect is wrong")
+            error!("[{container_name}] Response from inspect is wrong")
         }
     }
     Ok(())
@@ -82,27 +73,30 @@ fn backup_all_mounts(
     container: &PsInfo,
 ) -> Result<bool, std::io::Error> {
     debug!("Inspect: {:?}", container_info);
-    info!("Backing up {}", container.names);
+    info!("[{}] Start backup of volumes", container.names);
 
     if *container_info
         .config
         .labels
         .get("type")
         .unwrap_or(&"-".to_string())
-        == "backupcontainer"
+        == TYPE_BACKUPCONTAINER
     {
-        info!("Skipping this container as it it a backup container");
+        info!(
+            "[{}] Skipping this container as it it a backup container",
+            container.names
+        );
         return Ok(true);
     }
 
     for mount in container_info.mounts.iter() {
-        info!("- backing up {}", mount.destination);
+        info!("[{}] - backing up {}", container.names, mount.destination);
 
         let mut child = Command::new("/Users/cpolderman/.rd/bin/docker")
             .arg("run")
             .arg("--rm")
             .arg("--label")
-            .arg("type=backupcontainer")
+            .arg(format!("type={}", TYPE_BACKUPCONTAINER))
             .arg("-v")
             .arg(".:/backupdest")
             .arg("--volumes-from")
@@ -116,6 +110,7 @@ fn backup_all_mounts(
                 sanitize(&mount.destination).as_str()
             ))
             .arg(mount.destination.as_str())
+            .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()?;
         let exit_status = child.wait().unwrap();
