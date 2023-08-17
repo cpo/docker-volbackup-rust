@@ -84,12 +84,11 @@ fn backup_all_mounts(
     debug!("Inspect: {:?}", container_info);
     info!("Backing up {}", container.names);
 
-    if container_info
+    if *container_info
         .config
         .labels
         .get("type")
         .unwrap_or(&"-".to_string())
-        .to_string()
         == "backupcontainer"
     {
         info!("Skipping this container as it it a backup container");
@@ -127,8 +126,8 @@ fn backup_all_mounts(
     Ok(true)
 }
 
-fn sanitize(s: &String) -> String {
-    s.replace("/", "_")
+fn sanitize(s: &str) -> String {
+    s.replace('/', "_")
 }
 
 fn docker_jsonline_command<R, I, S>(args: I) -> Result<Vec<R>, std::io::Error>
@@ -145,11 +144,9 @@ where
     let stdout = child.stdout.as_ref().unwrap();
     let fd = stdout.as_fd();
     let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
-    Ok(
-        serde_jsonlines::JsonLinesReader::new(&mut BufReader::new(f))
-            .read_all::<R>()
-            .collect::<std::io::Result<Vec<R>>>()?,
-    )
+    serde_jsonlines::JsonLinesReader::new(&mut BufReader::new(f))
+        .read_all::<R>()
+        .collect::<std::io::Result<Vec<R>>>()
 }
 
 fn docker_json_command<R, I, S>(args: I) -> Result<Vec<R>, std::io::Error>
