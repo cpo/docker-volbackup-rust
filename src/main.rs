@@ -132,13 +132,14 @@ where
     R: DeserializeOwned,
 {
     debug!("Execute jsonline {:?}", args);
-    let child = Command::new(DOCKER_COMMAND)
+    let mut child = Command::new(DOCKER_COMMAND)
         .args(args)
         .stdout(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.as_ref().unwrap();
     let fd = stdout.as_fd();
     let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
+    child.wait()?;
     serde_jsonlines::JsonLinesReader::new(&mut BufReader::new(f))
         .read_all::<R>()
         .collect::<std::io::Result<Vec<R>>>()
@@ -151,12 +152,13 @@ where
     R: DeserializeOwned,
 {
     debug!("Execute json {:?}", args);
-    let child = Command::new(DOCKER_COMMAND)
+    let mut child = Command::new(DOCKER_COMMAND)
         .args(args)
         .stdout(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.as_ref().unwrap();
     let fd = stdout.as_fd();
     let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
+    child.wait()?;
     Ok(serde_json::from_reader::<_, Vec<R>>(f)?)
 }
