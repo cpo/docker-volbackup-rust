@@ -11,6 +11,7 @@ use std::{
     os::fd::{AsFd, AsRawFd, FromRawFd},
     process::{Command, Stdio},
 };
+use types::DockerError;
 
 mod types;
 
@@ -47,14 +48,14 @@ fn main() {
 
     match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"], &cli_args) {
         Ok(ps_info) => backup_container(ps_info, cli_args).expect("Backup failed"),
-        Err(e) => error!("Error {e}"),
+        Err(e) => error!("Error {:?}", e),
     };
 }
 
 /*
  * Inspect a container to find out the mounts.
  */
-fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), std::io::Error> {
+fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), DockerError> {
     info!(
         "Found containers: {:?}",
         ps_info
@@ -100,7 +101,7 @@ fn backup_all_mounts(
     container_info: &ContainerInfo,
     container: &PsInfo,
     cli_args: &CliArguments,
-) -> Result<bool, std::io::Error> {
+) -> Result<bool, DockerError> {
     debug!("Inspect: {:?}", container_info);
     info!("[{}] Start backup of volumes", container.names);
 
@@ -120,54 +121,38 @@ fn backup_all_mounts(
 
     if cli_args.stop_start {
         info!("[{}] Stopping container", container.names);
-        let mut child = Command::new(cli_args.docker.as_str())
-            .arg("stop")
-            .arg(container_info.id.as_str())
-            .spawn()?;
-        let exit_status = child.wait()?;
-        if !exit_status.success() {
-            return Ok(false);
-        }
+        docker_outputless_command(cli_args, vec!["stop", container_info.id.as_str()])?;
     }
 
     for mount in container_info.mounts.iter() {
         info!("[{}] - backing up {}", container.names, mount.destination);
-        let mut child = Command::new(cli_args.docker.as_str())
-            .arg("run")
-            .arg("--rm")
-            .arg("--label")
-            .arg(format!("type={}", TYPE_BACKUPCONTAINER))
-            .arg("-v")
-            .arg(".:/backupdest")
-            .arg("--volumes-from")
-            .arg(container_info.id.as_str())
-            .arg(cli_args.image.as_str())
-            .arg("tar")
-            .arg("cvf")
-            .arg(format!(
-                "/backupdest/{}{}.tar",
-                container.names,
-                sanitize(&mount.destination).as_str()
-            ))
-            .arg(mount.destination.as_str())
-            .stderr(Stdio::null())
-            .stdout(Stdio::null())
-            .spawn()?;
-        let exit_status = child.wait()?;
-        if !exit_status.success() {
-            return Ok(false);
-        }
+        docker_outputless_command(
+            cli_args,
+            vec![
+                "run",
+                "--rm",
+                "--label",
+                format!("type={}", TYPE_BACKUPCONTAINER).as_str(),
+                "-v",
+                ".:/backupdest",
+                "--volumes-from",
+                container_info.id.as_str(),
+                cli_args.image.as_str(),
+                "tar",
+                "cvf",
+                format!(
+                    "/backupdest/{}{}.tar",
+                    container.names,
+                    sanitize(&mount.destination).as_str()
+                )
+                .as_str(),
+                mount.destination.as_str(),
+            ],
+        )?;
     }
     if cli_args.stop_start {
         info!("[{}] Restarting container", container.names);
-        let mut child = Command::new(cli_args.docker.as_str())
-            .arg("start")
-            .arg(container_info.id.as_str())
-            .spawn()?;
-        let exit_status = child.wait()?;
-        if !exit_status.success() {
-            return Ok(false);
-        }
+        docker_outputless_command(cli_args, vec!["start", container_info.id.as_str()])?;
     }
     Ok(true)
 }
@@ -180,21 +165,41 @@ fn sanitize(s: &str) -> String {
 }
 
 /*
+ * Execute a docker command without output.
+ */
+fn docker_outputless_command(
+    cli_args: &CliArguments,
+    arguments: Vec<&str>,
+) -> Result<(), DockerError> {
+    let mut child = Command::new(cli_args.docker.as_str())
+        .args(arguments)
+        .stdout(Stdio::null())
+        .spawn()?;
+    let exit_status = child.wait()?;
+    if !exit_status.success() {
+        Err(DockerError {
+            message: String::from(""),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+/*
  * Execute a docker command and parse the output as jsonline.
  */
 fn docker_jsonline_command<R, I, S>(
     arguments: I,
     cli_args: &CliArguments,
-) -> Result<Vec<R>, std::io::Error>
+) -> Result<Vec<R>, DockerError>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    let f = execute(arguments, cli_args)?;
-    serde_jsonlines::JsonLinesReader::new(&mut BufReader::new(f))
-        .read_all::<R>()
-        .collect::<std::io::Result<Vec<R>>>()
+    let f = &mut BufReader::new(execute(arguments, cli_args)?);
+    let elements = serde_jsonlines::JsonLinesReader::new(f).read_all::<R>();
+    Ok(elements.collect::<std::io::Result<Vec<R>>>()?)
 }
 
 /*
@@ -203,7 +208,7 @@ where
 fn docker_json_command<R, I, S>(
     arguments: I,
     cli_args: &CliArguments,
-) -> Result<Vec<R>, std::io::Error>
+) -> Result<Vec<R>, DockerError>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
@@ -216,7 +221,7 @@ where
 /*
  * Execute a single command and return the File containing the output to the caller.
  */
-fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<File, std::io::Error>
+fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<File, DockerError>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
