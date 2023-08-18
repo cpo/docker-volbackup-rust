@@ -9,7 +9,7 @@ use std::{
     fs::File,
     io::BufReader,
     os::fd::{AsFd, AsRawFd, FromRawFd},
-    process::{Command, Stdio},
+    process::{Command, ExitCode, Stdio},
 };
 use types::DockerError;
 
@@ -37,7 +37,7 @@ struct CliArguments {
 /*
  * Entrypoint.
  */
-fn main() {
+fn main() -> ExitCode {
     let cli_args = CliArguments::parse();
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", cli_args.loglevel.as_str())
@@ -46,16 +46,22 @@ fn main() {
 
     info!("Docker volume backup v1.0");
 
-    match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"], &cli_args) {
-        Ok(ps_info) => backup_container(ps_info, cli_args).expect("Backup failed"),
-        Err(e) => error!("Error {:?}", e),
+    return match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"], &cli_args) {
+        Ok(ps_info) => match backup_container(ps_info, cli_args).expect("Backup failed") {
+            true => ExitCode::FAILURE,
+            false => ExitCode::SUCCESS,
+        },
+        Err(e) => {
+            error!("Error {:?}", e);
+            ExitCode::SUCCESS
+        }
     };
 }
 
 /*
  * Inspect a container to find out the mounts.
  */
-fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), DockerError> {
+fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<bool, DockerError> {
     info!(
         "Found containers: {:?}",
         ps_info
@@ -64,6 +70,7 @@ fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), 
             .collect::<Vec<&str>>()
     );
 
+    let mut has_errors = false;
     for ps_info in ps_info {
         let container_name = &ps_info.names;
         info!(
@@ -77,6 +84,7 @@ fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), 
         )?;
         if let Some(container_info) = inspected.get(0) {
             if !backup_all_mounts(container_info, &ps_info, &cli_args)? {
+                has_errors = true;
                 error!(
                     "[{container_name}] Error backing up container {}",
                     container_name
@@ -91,7 +99,7 @@ fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), 
             error!("[{container_name}] Response from inspect is wrong (no data returned)")
         }
     }
-    Ok(())
+    Ok(!has_errors)
 }
 
 /*
@@ -124,9 +132,10 @@ fn backup_all_mounts(
         docker_outputless_command(cli_args, vec!["stop", container_info.id.as_str()])?;
     }
 
+    let mut errors = 0;
     for mount in container_info.mounts.iter() {
         info!("[{}] - backing up {}", container.names, mount.destination);
-        docker_outputless_command(
+        if let Err(_) = docker_outputless_command(
             cli_args,
             vec![
                 "run",
@@ -148,13 +157,20 @@ fn backup_all_mounts(
                 .as_str(),
                 mount.destination.as_str(),
             ],
-        )?;
+        ) {
+            error!(
+                "[{}] Error in backup of volume {}",
+                container.names, mount.destination
+            );
+            errors = errors + 1;
+        };
     }
     if cli_args.stop_start {
         info!("[{}] Restarting container", container.names);
         docker_outputless_command(cli_args, vec!["start", container_info.id.as_str()])?;
     }
-    Ok(true)
+
+    Ok(errors == 0)
 }
 
 /*
