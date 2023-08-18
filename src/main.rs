@@ -10,7 +10,7 @@ use types::DockerError;
 mod exec;
 mod types;
 
-const TYPE_BACKUPCONTAINER: &str = "backupcontainer";
+const TYPE_BACKUPCONTAINER: &str = "docker-volbackup";
 
 /// Backup all mounted volumes connected to a running container.
 #[derive(Parser)]
@@ -89,7 +89,7 @@ fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<bool
                 )
             } else {
                 info!(
-                    "[{container_name}] Backup of container {} done.",
+                    "[{container_name}] Backup of container {} done. 🫡",
                     container_name
                 )
             }
@@ -119,7 +119,7 @@ fn backup_all_mounts(
         == TYPE_BACKUPCONTAINER
     {
         info!(
-            "[{}] Skipping this container as it it a backup container",
+            "[{}] Skipping this container as it it a backup container 🫡",
             container.names
         );
         return Ok(true);
@@ -155,7 +155,9 @@ fn backup_all_mounts(
                 .as_str(),
                 mount.destination.as_str(),
             ],
-        ).is_err() {
+        )
+        .is_err()
+        {
             error!(
                 "[{}] Error in backup of volume {}",
                 container.names, mount.destination
