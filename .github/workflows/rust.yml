@@ -16,7 +16,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-
     - name: Cache target directory
       uses: actions/cache@v3
       with:
@@ -29,7 +28,8 @@ jobs:
           target/
     - name: Build
       run: cargo build -r --verbose
-    
+    - name: Clippy
+      run: cargo clippy
     - name: Upload artifact
       uses: actions/upload-artifact@v3.1.2
       with: 
