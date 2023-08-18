@@ -7,6 +7,8 @@ This is a small utility to automatically backup all volumes which are connected 
 
 > WARNING: some containers keep files open or rewrite files during the backup, this might cause data loss. If you want to be sure the backup is 1:1, please use the `start-stop` commandline option.
 
+> DISCLAIMER: this is my first Rust project (coming from Kotlin/Java and a C past) so have mercy. If you have remarks please open an issue, thanks!
+
 ## Commandline usage
 
 ```
