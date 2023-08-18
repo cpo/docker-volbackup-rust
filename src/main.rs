@@ -33,6 +33,9 @@ struct CliArguments {
     docker: String,
 }
 
+/*
+ * Entrypoint.
+ */
 fn main() {
     let cli_args = CliArguments::parse();
     if env::var("RUST_LOG").is_err() {
@@ -48,6 +51,9 @@ fn main() {
     };
 }
 
+/*
+ * Inspect a container to find out the mounts.
+ */
 fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), std::io::Error> {
     info!(
         "Found containers: {:?}",
@@ -87,6 +93,9 @@ fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), 
     Ok(())
 }
 
+/*
+ * Backup the mounts listed in the container as tar files.
+ */
 fn backup_all_mounts(
     container_info: &ContainerInfo,
     container: &PsInfo,
@@ -163,10 +172,16 @@ fn backup_all_mounts(
     Ok(true)
 }
 
+/*
+ * Sanitize a path into part of the backup filename.
+ */
 fn sanitize(s: &str) -> String {
     s.replace('/', "_")
 }
 
+/*
+ * Execute a docker command and parse the output as jsonline.
+ */
 fn docker_jsonline_command<R, I, S>(
     arguments: I,
     cli_args: &CliArguments,
@@ -176,19 +191,15 @@ where
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    debug!("Execute jsonline {:?}", arguments);
-    let child = Command::new(cli_args.docker.as_str())
-        .args(arguments)
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.as_ref().unwrap();
-    let fd = stdout.as_fd();
-    let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
+    let f = execute(arguments, cli_args)?;
     serde_jsonlines::JsonLinesReader::new(&mut BufReader::new(f))
         .read_all::<R>()
         .collect::<std::io::Result<Vec<R>>>()
 }
 
+/*
+ * Execute a docker command and parse the output as json.
+ */
 fn docker_json_command<R, I, S>(
     arguments: I,
     cli_args: &CliArguments,
@@ -198,7 +209,19 @@ where
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    debug!("Execute json {:?}", arguments);
+    let f = execute(arguments, cli_args)?;
+    Ok(serde_json::from_reader::<_, Vec<R>>(f)?)
+}
+
+/*
+ * Execute a single command and return the File containing the output to the caller.
+ */
+fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<File, std::io::Error>
+where
+    I: IntoIterator<Item = S> + Debug,
+    S: AsRef<OsStr> + Debug,
+{
+    debug!("Execute {:?}", arguments);
     let child = Command::new(cli_args.docker.as_str())
         .args(arguments)
         .stdout(Stdio::piped())
@@ -206,5 +229,5 @@ where
     let stdout = child.stdout.as_ref().unwrap();
     let fd = stdout.as_fd();
     let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
-    Ok(serde_json::from_reader::<_, Vec<R>>(f)?)
+    Ok(f)
 }
