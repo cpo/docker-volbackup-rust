@@ -13,7 +13,7 @@ use std::{
 
 mod types;
 
-const DOCKER_COMMAND: &str = "/Users/cpolderman/.rd/bin/docker";
+const DOCKER_COMMAND: &str = "/usr/bin/docker";
 const TYPE_BACKUPCONTAINER: &str = "backupcontainer";
 
 fn main() {
@@ -91,8 +91,15 @@ fn backup_all_mounts(
 
     for mount in container_info.mounts.iter() {
         info!("[{}] - backing up {}", container.names, mount.destination);
-
-        let mut child = Command::new("/Users/cpolderman/.rd/bin/docker")
+        // let mut child = Command::new(DOCKER_COMMAND)
+        //     .arg("stop")
+        //     .arg(container_info.id.as_str())
+        //     .spawn()?;
+        // let exit_status = child.wait()?;
+        // if !exit_status.success() {
+        //     return Ok(false);
+        // }
+        let mut child = Command::new(DOCKER_COMMAND)
             .arg("run")
             .arg("--rm")
             .arg("--label")
@@ -111,12 +118,20 @@ fn backup_all_mounts(
             ))
             .arg(mount.destination.as_str())
             .stderr(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .spawn()?;
         let exit_status = child.wait()?;
         if !exit_status.success() {
             return Ok(false);
         }
+        // let mut child = Command::new(DOCKER_COMMAND)
+        //     .arg("start")
+        //     .arg(container_info.id.as_str())
+        //     .spawn()?;
+        // let exit_status = child.wait()?;
+        // if !exit_status.success() {
+        //     return Ok(false);
+        // }
     }
     Ok(true)
 }
