@@ -3,10 +3,8 @@ use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
     fmt::Debug,
-    fs::File,
-    io::BufReader,
-    os::fd::{AsRawFd, FromRawFd},
-    process::{Command, Stdio},
+    io::{self},
+    process::{Command, Output, Stdio},
 };
 
 use crate::{types::DockerError, CliArguments};
@@ -44,9 +42,9 @@ where
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    let f = &mut BufReader::new(execute(arguments, cli_args)?);
-    let elements = serde_jsonlines::JsonLinesReader::new(f).read_all::<R>();
-    Ok(elements.collect::<std::io::Result<Vec<R>>>()?)
+    let f = execute(arguments, cli_args)?;
+    let elements = serde_jsonlines::JsonLinesReader::new(f.stdout.as_slice()).read_all::<R>();
+    Ok(elements.collect::<io::Result<Vec<R>>>()?)
 }
 
 /*
@@ -62,24 +60,20 @@ where
     R: DeserializeOwned,
 {
     let f = execute(arguments, cli_args)?;
-    Ok(serde_json::from_reader::<_, Vec<R>>(f)?)
+    Ok(serde_json::from_reader::<_, Vec<R>>(f.stdout.as_slice())?)
 }
 
 /*
  * Execute a single command and return the File containing the output to the caller.
  */
-pub fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<File, DockerError>
+pub fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<Output, DockerError>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
 {
     debug!("Execute {:?}", arguments);
-    let child = Command::new(cli_args.docker.as_str())
+    Ok(Command::new(cli_args.docker.as_str())
         .args(arguments)
         .stdout(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.as_ref().unwrap();
-    let fd = stdout.as_raw_fd();
-    let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
-    Ok(f)
+        .output()?)
 }
