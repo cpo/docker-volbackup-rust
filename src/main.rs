@@ -1,4 +1,5 @@
 use crate::types::{ContainerInfo, PsInfo};
+use clap::Parser;
 use log::{debug, error, info};
 use serde::de::DeserializeOwned;
 use std::{
@@ -13,22 +14,41 @@ use std::{
 
 mod types;
 
-const DOCKER_COMMAND: &str = "/usr/bin/docker";
 const TYPE_BACKUPCONTAINER: &str = "backupcontainer";
 
+/// Backup all mounted volumes connected to a running container.
+#[derive(Parser)]
+struct CliArguments {
+    /// Stop the container before backup and restart it afterwards
+    #[arg(short, long, default_value = "false")]
+    stop_start: bool,
+    /// The image to use for running a volume backup
+    #[arg(short, long, default_value = "ubuntu")]
+    image: String,
+    /// Logging level
+    #[arg(short, long, default_value = "info")]
+    loglevel: String,
+    /// Where to find the docker executable
+    #[arg(short, long, default_value = "/usr/bin/docker")]
+    docker: String,
+}
+
 fn main() {
+    let cli_args = CliArguments::parse();
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "info")
+        env::set_var("RUST_LOG", cli_args.loglevel.as_str())
     }
     env_logger::init();
+
     info!("Docker volume backup v1.0");
-    match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"]) {
-        Ok(ps_info) => backup_container(ps_info).expect("Backup failed"),
+
+    match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"], &cli_args) {
+        Ok(ps_info) => backup_container(ps_info, cli_args).expect("Backup failed"),
         Err(e) => error!("Error {e}"),
     };
 }
 
-fn backup_container(ps_info: Vec<PsInfo>) -> Result<(), std::io::Error> {
+fn backup_container(ps_info: Vec<PsInfo>, cli_args: CliArguments) -> Result<(), std::io::Error> {
     info!(
         "Found containers: {:?}",
         ps_info
@@ -44,13 +64,12 @@ fn backup_container(ps_info: Vec<PsInfo>) -> Result<(), std::io::Error> {
             container_name
         );
 
-        let inspected = docker_json_command::<ContainerInfo, _, _>(vec![
-            "inspect",
-            container_name.as_str(),
-            "--format=json",
-        ])?;
+        let inspected = docker_json_command::<ContainerInfo, _, _>(
+            vec!["inspect", container_name.as_str(), "--format=json"],
+            &cli_args,
+        )?;
         if let Some(container_info) = inspected.get(0) {
-            if !backup_all_mounts(container_info, &ps_info)? {
+            if !backup_all_mounts(container_info, &ps_info, &cli_args)? {
                 error!(
                     "[{container_name}] Error backing up container {}",
                     container_name
@@ -71,6 +90,7 @@ fn backup_container(ps_info: Vec<PsInfo>) -> Result<(), std::io::Error> {
 fn backup_all_mounts(
     container_info: &ContainerInfo,
     container: &PsInfo,
+    cli_args: &CliArguments,
 ) -> Result<bool, std::io::Error> {
     debug!("Inspect: {:?}", container_info);
     info!("[{}] Start backup of volumes", container.names);
@@ -89,17 +109,21 @@ fn backup_all_mounts(
         return Ok(true);
     }
 
+    if cli_args.stop_start {
+        info!("[{}] Stopping container", container.names);
+        let mut child = Command::new(cli_args.docker.as_str())
+            .arg("stop")
+            .arg(container_info.id.as_str())
+            .spawn()?;
+        let exit_status = child.wait()?;
+        if !exit_status.success() {
+            return Ok(false);
+        }
+    }
+
     for mount in container_info.mounts.iter() {
         info!("[{}] - backing up {}", container.names, mount.destination);
-        // let mut child = Command::new(DOCKER_COMMAND)
-        //     .arg("stop")
-        //     .arg(container_info.id.as_str())
-        //     .spawn()?;
-        // let exit_status = child.wait()?;
-        // if !exit_status.success() {
-        //     return Ok(false);
-        // }
-        let mut child = Command::new(DOCKER_COMMAND)
+        let mut child = Command::new(cli_args.docker.as_str())
             .arg("run")
             .arg("--rm")
             .arg("--label")
@@ -108,7 +132,7 @@ fn backup_all_mounts(
             .arg(".:/backupdest")
             .arg("--volumes-from")
             .arg(container_info.id.as_str())
-            .arg(env::var("BACKUP_IMAGE").unwrap_or(String::from("ubuntu")))
+            .arg(cli_args.image.as_str())
             .arg("tar")
             .arg("cvf")
             .arg(format!(
@@ -124,14 +148,17 @@ fn backup_all_mounts(
         if !exit_status.success() {
             return Ok(false);
         }
-        // let mut child = Command::new(DOCKER_COMMAND)
-        //     .arg("start")
-        //     .arg(container_info.id.as_str())
-        //     .spawn()?;
-        // let exit_status = child.wait()?;
-        // if !exit_status.success() {
-        //     return Ok(false);
-        // }
+    }
+    if cli_args.stop_start {
+        info!("[{}] Restarting container", container.names);
+        let mut child = Command::new(cli_args.docker.as_str())
+            .arg("start")
+            .arg(container_info.id.as_str())
+            .spawn()?;
+        let exit_status = child.wait()?;
+        if !exit_status.success() {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
@@ -140,15 +167,18 @@ fn sanitize(s: &str) -> String {
     s.replace('/', "_")
 }
 
-fn docker_jsonline_command<R, I, S>(args: I) -> Result<Vec<R>, std::io::Error>
+fn docker_jsonline_command<R, I, S>(
+    arguments: I,
+    cli_args: &CliArguments,
+) -> Result<Vec<R>, std::io::Error>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    debug!("Execute jsonline {:?}", args);
-    let child = Command::new(DOCKER_COMMAND)
-        .args(args)
+    debug!("Execute jsonline {:?}", arguments);
+    let child = Command::new(cli_args.docker.as_str())
+        .args(arguments)
         .stdout(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.as_ref().unwrap();
@@ -159,15 +189,18 @@ where
         .collect::<std::io::Result<Vec<R>>>()
 }
 
-fn docker_json_command<R, I, S>(args: I) -> Result<Vec<R>, std::io::Error>
+fn docker_json_command<R, I, S>(
+    arguments: I,
+    cli_args: &CliArguments,
+) -> Result<Vec<R>, std::io::Error>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    debug!("Execute json {:?}", args);
-    let child = Command::new(DOCKER_COMMAND)
-        .args(args)
+    debug!("Execute json {:?}", arguments);
+    let child = Command::new(cli_args.docker.as_str())
+        .args(arguments)
         .stdout(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.as_ref().unwrap();
