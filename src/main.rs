@@ -44,7 +44,7 @@ fn main() -> ExitCode {
 
     info!("Docker volume backup v1.0");
 
-    return match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"], &cli_args) {
+    match docker_jsonline_command::<PsInfo, _, _>(vec!["ps", "--format=json"], &cli_args) {
         Ok(ps_info) => match backup_container(ps_info, cli_args).expect("Backup failed") {
             true => ExitCode::FAILURE,
             false => ExitCode::SUCCESS,
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
             error!("Error {:?}", e);
             ExitCode::SUCCESS
         }
-    };
+    }
 }
 
 /*
@@ -133,7 +133,7 @@ fn backup_all_mounts(
     let mut errors = 0;
     for mount in container_info.mounts.iter() {
         info!("[{}] - backing up {}", container.names, mount.destination);
-        if let Err(_) = docker_outputless_command(
+        if docker_outputless_command(
             cli_args,
             vec![
                 "run",
@@ -155,12 +155,12 @@ fn backup_all_mounts(
                 .as_str(),
                 mount.destination.as_str(),
             ],
-        ) {
+        ).is_err() {
             error!(
                 "[{}] Error in backup of volume {}",
                 container.names, mount.destination
             );
-            errors = errors + 1;
+            errors += 1;
         };
     }
     if cli_args.stop_start {
