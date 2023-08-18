@@ -19,7 +19,7 @@ jobs:
     - name: Build
       run: cargo build -r --verbose
     - name: Upload artifact
-      uses: actions/upload-artiface@v3
+      uses: actions/upload-artifact@v3.1.2
       with: 
         name: docker-volbackup
         path: ./target/release/volbackup
