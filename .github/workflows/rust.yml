@@ -18,8 +18,8 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build -r --verbose
-    - uses: actions/upload-artiface@v3
     - name: Upload artifact
+      uses: actions/upload-artiface@v3
       with: 
         name: docker-volbackup
         path: ./target/release/volbackup
