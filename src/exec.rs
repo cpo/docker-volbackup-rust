@@ -42,7 +42,7 @@ where
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    let f = execute(arguments, cli_args)?;
+    let f = execute_with_output(arguments, cli_args)?;
     let elements = serde_jsonlines::JsonLinesReader::new(f.stdout.as_slice()).read_all::<R>();
     Ok(elements.collect::<io::Result<Vec<R>>>()?)
 }
@@ -59,14 +59,17 @@ where
     S: AsRef<OsStr> + Debug,
     R: DeserializeOwned,
 {
-    let f = execute(arguments, cli_args)?;
+    let f = execute_with_output(arguments, cli_args)?;
     Ok(serde_json::from_reader::<_, Vec<R>>(f.stdout.as_slice())?)
 }
 
 /*
  * Execute a single command and return the File containing the output to the caller.
  */
-pub fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<Output, DockerError>
+pub fn execute_with_output<I, S>(
+    arguments: I,
+    cli_args: &CliArguments,
+) -> Result<Output, DockerError>
 where
     I: IntoIterator<Item = S> + Debug,
     S: AsRef<OsStr> + Debug,
