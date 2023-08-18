@@ -1,34 +1,32 @@
-use crate::types::{ContainerInfo, PsInfo};
+use crate::{
+    exec::{docker_json_command, docker_jsonline_command, docker_outputless_command},
+    types::{ContainerInfo, PsInfo},
+};
 use clap::Parser;
 use log::{debug, error, info};
-use serde::de::DeserializeOwned;
-use std::{
-    env,
-    ffi::OsStr,
-    fmt::Debug,
-    fs::File,
-    io::BufReader,
-    os::fd::{AsFd, AsRawFd, FromRawFd},
-    process::{Command, ExitCode, Stdio},
-};
+use std::{env, process::ExitCode};
 use types::DockerError;
 
+mod exec;
 mod types;
 
 const TYPE_BACKUPCONTAINER: &str = "backupcontainer";
 
 /// Backup all mounted volumes connected to a running container.
 #[derive(Parser)]
-struct CliArguments {
+pub struct CliArguments {
     /// Stop the container before backup and restart it afterwards
     #[arg(short, long, default_value = "false")]
     stop_start: bool,
+
     /// The image to use for running a volume backup
     #[arg(short, long, default_value = "ubuntu")]
     image: String,
+
     /// Logging level
     #[arg(short, long, default_value = "info")]
     loglevel: String,
+
     /// Where to find the docker executable
     #[arg(short, long, default_value = "/usr/bin/docker")]
     docker: String,
@@ -178,77 +176,4 @@ fn backup_all_mounts(
  */
 fn sanitize(s: &str) -> String {
     s.replace('/', "_")
-}
-
-/*
- * Execute a docker command without output.
- */
-fn docker_outputless_command(
-    cli_args: &CliArguments,
-    arguments: Vec<&str>,
-) -> Result<(), DockerError> {
-    let mut child = Command::new(cli_args.docker.as_str())
-        .args(arguments)
-        .stdout(Stdio::null())
-        .spawn()?;
-    let exit_status = child.wait()?;
-    if !exit_status.success() {
-        Err(DockerError {
-            message: String::from(""),
-        })
-    } else {
-        Ok(())
-    }
-}
-
-/*
- * Execute a docker command and parse the output as jsonline.
- */
-fn docker_jsonline_command<R, I, S>(
-    arguments: I,
-    cli_args: &CliArguments,
-) -> Result<Vec<R>, DockerError>
-where
-    I: IntoIterator<Item = S> + Debug,
-    S: AsRef<OsStr> + Debug,
-    R: DeserializeOwned,
-{
-    let f = &mut BufReader::new(execute(arguments, cli_args)?);
-    let elements = serde_jsonlines::JsonLinesReader::new(f).read_all::<R>();
-    Ok(elements.collect::<std::io::Result<Vec<R>>>()?)
-}
-
-/*
- * Execute a docker command and parse the output as json.
- */
-fn docker_json_command<R, I, S>(
-    arguments: I,
-    cli_args: &CliArguments,
-) -> Result<Vec<R>, DockerError>
-where
-    I: IntoIterator<Item = S> + Debug,
-    S: AsRef<OsStr> + Debug,
-    R: DeserializeOwned,
-{
-    let f = execute(arguments, cli_args)?;
-    Ok(serde_json::from_reader::<_, Vec<R>>(f)?)
-}
-
-/*
- * Execute a single command and return the File containing the output to the caller.
- */
-fn execute<I, S>(arguments: I, cli_args: &CliArguments) -> Result<File, DockerError>
-where
-    I: IntoIterator<Item = S> + Debug,
-    S: AsRef<OsStr> + Debug,
-{
-    debug!("Execute {:?}", arguments);
-    let child = Command::new(cli_args.docker.as_str())
-        .args(arguments)
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let stdout = child.stdout.as_ref().unwrap();
-    let fd = stdout.as_fd();
-    let f = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
-    Ok(f)
 }
