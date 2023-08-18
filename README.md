@@ -1,5 +1,7 @@
 # Docker volume backup
 
+[![Rust](https://github.com/cpo/volbackup-rust/actions/workflows/rust.yml/badge.svg)](https://github.com/cpo/volbackup-rust/actions/workflows/rust.yml)
+
 ## What is this wizardry
 This is a small utility to automatically backup all volumes which are connected to a container.
 
